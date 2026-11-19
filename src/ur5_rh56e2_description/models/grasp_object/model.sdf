@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <!-- Centre-origin: spawn at z=0.211 on the 9 cm support. -->
+  <model name="grasp_object">
+    <static>false</static>
+    <link name="object_link">
+      <inertial>
+        <mass>0.05</mass>
+        <inertia>
+          <ixx>0.0002428125</ixx><iyy>0.0002428125</iyy><izz>0.000005625</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="collision">
+        <geometry><cylinder><radius>0.015</radius><length>0.24</length></cylinder></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><cylinder><radius>0.015</radius><length>0.24</length></cylinder></geometry>
+        <material><ambient>0.8 0.2 0.2 1</ambient><diffuse>0.8 0.2 0.2 1</diffuse></material>
+      </visual>
+      <sensor name="object_contacts" type="contact">
+        <always_on>true</always_on>
+        <update_rate>100</update_rate>
+        <topic>/grasp_object/contacts</topic>
+        <contact><collision>collision</collision></contact>
+      </sensor>
+    </link>
+  </model>
+</sdf>

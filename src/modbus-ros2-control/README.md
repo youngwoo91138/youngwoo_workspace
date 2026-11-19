@@ -162,8 +162,10 @@ modbus_ros2_control/
 | | `slave_id` | `auto` | |
 | | `baudrate` | `115200` | |
 | | `read_feedback` | `true` | |
-| | `default_speed` | `400` | RH56E2 `SPEED_SET`，范围 `[0, 1000]` |
-| | `default_force` | `600` | RH56E2 `FORCE_SET`，范围 `[0, 3000]`，单位 g |
+| | `default_speed` | `200` | RH56E2 SPEED_SET (0–1000) |
+| | `default_force` | `300` | RH56E2 FORCE_SET (0–3000 g) |
+| | `read_tactile` | `false` | T1 장치에서 다섯 손가락 촉각 패드를 읽어 `/hand/tactile/*_pad` 발행 |
+| | `tactile_read_period_ms` | `100` | 다음 손가락 촉각 읽기 간격; 20–1000 ms로 제한 |
 | **FreedomRS485Hardware** | `protocol_version` | `auto` | `freedomv1` / `freedomv2` |
 | | `serial_port` | `/dev/ttyUSB0` | |
 | | `hand_side` | — | |
@@ -198,7 +200,7 @@ modbus_ros2_control/
 |------|-------------------|----------|
 | Changingtek 夹爪 | 0.0（闭合）~ 1.0（打开） | 0–9000（0=开，9000=合） |
 | LinkerHand O6/O7 | 0.0 ~ 1.0（弯曲→伸直） | 0–255 |
-| Inspire RH56 | 弧度（rad） | RH56E2 `ANGLE_SET`（1486）/`ANGLE_ACT`（1546）：归一化值 0–1000；1000 对应最大设备角度 |
+| Inspire RH56 | 弧度（rad） | RH56E2 ANGLE_SET (1486) / ANGLE_ACT (1546): 0–1000; 1000 对应伸展 |
 | Freedom / XHand1 | 弧度（rad） | 各协议自定义映射 |
 | TheoHand STD16A | 弧度 / 米（按 URDF 关节限位归一化） | 0–9000（协议位置单位约等于 0.01 deg） |
 
@@ -246,6 +248,26 @@ ros2 control list_controllers
 Inspire 单臂：`inspire_description` + `hand.launch.py`（`hardware:=real`）。双臂整机见各机器人 description 的 `robot.xacro` 与 launch。
 
 自定义 launch 要点：xacro 生成 URDF → `ros2_control_node` → 加载 `joint_state_broadcaster` 与位置控制器。可参考 `basic_joint_controller/launch/hand.launch.py`。
+
+RH56E2-2R-T1에서 `read_tactile:=true`를 지정하면 매뉴얼 V1.0.0의 표 56
+(인쇄 33–34쪽, PDF 41–42쪽)에 따라 다음 영역을 FC03으로 읽습니다.
+
+| 손가락 | 주소 범위 (매뉴얼 byte 주소) | 배열 | 토픽 |
+|---|---|---|---|
+| 엄지 | 4708–4899 | 12×8, 96셀 | `/hand/tactile/thumb_pad` |
+| 검지 | 4320–4479 | 10×8, 80셀 | `/hand/tactile/index_pad` |
+| 중지 | 3950–4109 | 10×8, 80셀 | `/hand/tactile/middle_pad` |
+| 약지 | 3580–3739 | 10×8, 80셀 | `/hand/tactile/ring_pad` |
+| 소지 | 3210–3369 | 10×8, 80셀 | `/hand/tactile/pinky_pad` |
+
+`Float64MultiArray.data`는 행 우선(row-major) 16비트 원시값이며 매뉴얼의
+값 범위는 0–4095입니다. 엄지는 thumb pad 96셀을,
+나머지 네 손가락은 finger pad 80셀을 사용합니다. 기본 100 ms마다 손가락 하나씩 순환하여 읽고, 읽기 사이에 관절 피드백과
+명령을 처리합니다. 손가락별 기본 갱신 간격은 약 500 ms이며 통신 지연이 추가됩니다.
+이 주소 표는 매뉴얼의 압저항식 센서용입니다. 정전용량식 C1 및 비촉각 모델에는
+적용하지 마세요.
+
+미끄러짐 테스트 실행 방법은 [프로젝트 README](../../README.md)를 참고하세요.
 
 ## 8. 扩展新夹爪
 

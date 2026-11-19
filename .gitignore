@@ -3,3 +3,7 @@ install/
 log/
 .vscode/
 
+__pycache__/
+*.pyc
+*.save
+/symlink_install_manifest.txt

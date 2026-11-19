@@ -10,10 +10,12 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>libmodbus-dev</depend>
   <depend>hardware_interface</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_lifecycle</depend>
+  <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>gripper_hardware_common</depend>
   <depend>arms_controller_common</depend>

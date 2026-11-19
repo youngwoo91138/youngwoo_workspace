@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <!-- Origin is the bottom of the base. Spawn at z=0.001 on the floor. -->
+  <model name="grasp_pillar">
+    <static>false</static>
+    <link name="pillar_link">
+      <!-- 250 g base + 50 g stem; compound centre of mass and inertia. -->
+      <inertial>
+        <pose>0 0 0.045 0 0 0</pose>
+        <mass>0.3</mass>
+        <inertia>
+          <ixx>0.00282375</ixx><iyy>0.00282375</iyy><izz>0.0006225</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="base_collision">
+        <pose>0 0 0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.07</radius><length>0.02</length></cylinder></geometry>
+      </collision>
+      <visual name="base_visual">
+        <pose>0 0 0.01 0 0 0</pose>
+        <geometry><cylinder><radius>0.07</radius><length>0.02</length></cylinder></geometry>
+        <material><ambient>0.15 0.15 0.15 1</ambient><diffuse>0.15 0.15 0.15 1</diffuse></material>
+      </visual>
+      <collision name="stem_collision">
+        <pose>0 0 0.22 0 0 0</pose>
+        <geometry><cylinder><radius>0.02</radius><length>0.4</length></cylinder></geometry>
+      </collision>
+      <visual name="stem_visual">
+        <pose>0 0 0.22 0 0 0</pose>
+        <geometry><cylinder><radius>0.02</radius><length>0.4</length></cylinder></geometry>
+        <material><ambient>0.8 0.2 0.2 1</ambient><diffuse>0.8 0.2 0.2 1</diffuse></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

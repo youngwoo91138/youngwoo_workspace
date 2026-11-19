@@ -65,6 +65,14 @@ hardware_interface::CallbackReturn InspireHandHardware::on_init(
 
   load_parameters();
   upper_limits_ = default_upper_limits(joint_names_);
+  if (read_tactile_enabled_)
+  {
+    for (std::size_t f = 0; f < kTactileFingers; ++f)
+    {
+      tactile_pub_[f] = get_node()->create_publisher<std_msgs::msg::Float64MultiArray>(
+        "/hand/tactile/" + tactile_names_[f] + "_pad", rclcpp::SensorDataQoS());
+    }
+  }
 
   for (std::size_t i = 0; i < kJointCount; ++i)
   {
@@ -83,11 +91,12 @@ hardware_interface::CallbackReturn InspireHandHardware::on_init(
 
   RCLCPP_INFO(
     rclcpp::get_logger(kLoggerName),
-    "Configured Inspire Modbus RTU hand: port=%s, baudrate=%d, id=%d, feedback=%s",
+    "Configured Inspire Modbus RTU hand: port=%s, baudrate=%d, id=%d, feedback=%s, tactile=%s",
     serial_port_.c_str(),
     baudrate_,
     slave_id_,
-    read_feedback_enabled_ ? "true" : "false");
+    read_feedback_enabled_ ? "true" : "false",
+    read_tactile_enabled_ ? "true" : "false");
 
   return hardware_interface::CallbackReturn::SUCCESS;
 }
@@ -110,21 +119,19 @@ hardware_interface::CallbackReturn InspireHandHardware::on_activate(
   pending_command_valid_ = false;
   pending_command_dirty_ = false;
   feedback_valid_ = false;
+  last_tactile_read_at_ = {};
 
   std::array<double, kJointCount> initial_positions{};
   std::array<double, kJointCount> initial_efforts{};
+  if (read_feedback_enabled_ && !read_feedback(initial_positions, initial_efforts))
+  {
+    RCLCPP_ERROR(rclcpp::get_logger(kLoggerName),
+      "Cannot activate: no valid initial angle feedback from hand ID %d", slave_id_);
+    disconnect_modbus();
+    return hardware_interface::CallbackReturn::ERROR;
+  }
   if (read_feedback_enabled_)
   {
-    if (!read_feedback(initial_positions, initial_efforts))
-    {
-      RCLCPP_ERROR(
-        rclcpp::get_logger(kLoggerName),
-        "Cannot activate Inspire hand without valid ANGLE_ACT feedback at register %u",
-        kAngleActRegister);
-      disconnect_modbus();
-      return hardware_interface::CallbackReturn::ERROR;
-    }
-
     for (std::size_t i = 0; i < kJointCount; ++i)
     {
       hw_positions_[i] = initial_positions[i];
@@ -295,6 +302,14 @@ void InspireHandHardware::load_parameters()
   read_feedback_enabled_ = parse_bool(
     get_parameter("read_feedback", read_feedback_enabled_ ? "true" : "false"),
     read_feedback_enabled_);
+  read_tactile_enabled_ = parse_bool(
+    get_parameter("read_tactile", read_tactile_enabled_ ? "true" : "false"),
+    read_tactile_enabled_);
+  tactile_read_period_ms_ = std::clamp(
+    parse_int(get_parameter("tactile_read_period_ms", std::to_string(tactile_read_period_ms_)),
+              tactile_read_period_ms_),
+    20,
+    1000);
 
   auto side_lower = hand_side_;
   std::transform(side_lower.begin(), side_lower.end(), side_lower.begin(), [](unsigned char c) {
@@ -432,6 +447,38 @@ void InspireHandHardware::background_loop()
   {
     const auto loop_start = std::chrono::steady_clock::now();
 
+    if (read_tactile_enabled_ &&
+        (last_tactile_read_at_ == std::chrono::steady_clock::time_point{} ||
+         loop_start - last_tactile_read_at_ >=
+           std::chrono::milliseconds(tactile_read_period_ms_)))
+    {
+      last_tactile_read_at_ = loop_start;
+      // Read one pad per loop so joint feedback/commands run between tactile requests.
+      const std::size_t f = next_tactile_finger_;
+      next_tactile_finger_ = (next_tactile_finger_ + 1) % kTactileFingers;
+      std::vector<uint16_t> taxels(tactile_rows_[f] * kIndexPadColumns);
+      if (read_tactile_pad(f, taxels))
+      {
+        std_msgs::msg::Float64MultiArray message;
+        message.layout.dim.resize(2);
+        message.layout.dim[0].label = "row";
+        message.layout.dim[0].size = tactile_rows_[f];
+        message.layout.dim[0].stride = taxels.size();
+        message.layout.dim[1].label = "column";
+        message.layout.dim[1].size = kIndexPadColumns;
+        message.layout.dim[1].stride = kIndexPadColumns;
+        message.data.assign(taxels.begin(), taxels.end());
+        tactile_pub_[f]->publish(message);
+      }
+      else
+      {
+        RCLCPP_WARN_THROTTLE(
+          get_node()->get_logger(), *get_node()->get_clock(), 2000,
+          "Failed to read %s tactile registers at address %u: %s",
+          tactile_names_[f].c_str(), tactile_registers_[f], modbus_->getLastError().c_str());
+      }
+    }
+
     if (read_feedback_enabled_)
     {
       std::array<double, kJointCount> positions{};
@@ -511,29 +558,28 @@ void InspireHandHardware::background_loop()
 
 bool InspireHandHardware::initialize_hand()
 {
+  // Six byte-sized mode entries: three 16-bit words, all bytes zero.
+  // Mode 0 stops at the angle target or force limit (manual section 2.6.20).
+  std::array<uint16_t, kActuatorCount / 2> modes{};
   std::array<uint16_t, kActuatorCount> speeds{};
   speeds.fill(default_speed_);
-  if (modbus_->writeRegisters(kSpeedSetRegister, speeds.size(), speeds.data()) !=
-      static_cast<int>(speeds.size()))
-  {
-    RCLCPP_ERROR(
-      rclcpp::get_logger(kLoggerName),
-      "Failed to set Inspire hand SPEED_SET register %u", kSpeedSetRegister);
-    return false;
-  }
-
   std::array<uint16_t, kActuatorCount> forces{};
   forces.fill(default_force_);
-  if (modbus_->writeRegisters(kForceSetRegister, forces.size(), forces.data()) !=
-      static_cast<int>(forces.size()))
-  {
-    RCLCPP_ERROR(
-      rclcpp::get_logger(kLoggerName),
-      "Failed to set Inspire hand FORCE_SET register %u", kForceSetRegister);
-    return false;
-  }
 
-  return true;
+  const auto write_block = [this](uint16_t address, const auto& values, const char* label) {
+    if (modbus_->writeRegisters(address, values.size(), values.data()) !=
+        static_cast<int>(values.size()))
+    {
+      RCLCPP_ERROR(rclcpp::get_logger(kLoggerName),
+        "Failed to initialize Inspire %s at address %u: %s",
+        label, address, modbus_->getLastError().c_str());
+      return false;
+    }
+    return true;
+  };
+  return write_block(kModeRegister, modes, "motion mode") &&
+         write_block(kSpeedSetRegister, speeds, "speed") &&
+         write_block(kForceSetRegister, forces, "force limit");
 }
 
 bool InspireHandHardware::read_feedback(
@@ -548,19 +594,15 @@ bool InspireHandHardware::read_feedback(
     return false;
   }
 
-  // Reject invalid values rather than clamping them to a plausible joint angle.
   if (std::any_of(angle_registers.begin(), angle_registers.end(),
       [](uint16_t value) { return value > 1000; }))
   {
-    RCLCPP_ERROR_THROTTLE(
-      rclcpp::get_logger(kLoggerName), *get_node()->get_clock(), 2000,
-      "Invalid Inspire ANGLE_ACT feedback at register %u: [%u, %u, %u, %u, %u, %u] "
-      "(expected 0..1000)",
-      kAngleActRegister, angle_registers[0], angle_registers[1], angle_registers[2],
+    RCLCPP_ERROR_THROTTLE(rclcpp::get_logger(kLoggerName), *get_node()->get_clock(), 2000,
+      "Invalid angle feedback (expected 0..1000): [%u, %u, %u, %u, %u, %u]",
+      angle_registers[0], angle_registers[1], angle_registers[2],
       angle_registers[3], angle_registers[4], angle_registers[5]);
     return false;
   }
-
   positions = actuators_to_joints(angle_registers);
 
   std::array<uint16_t, kActuatorCount> force_registers{};
@@ -576,10 +618,21 @@ bool InspireHandHardware::read_feedback(
   }
   else
   {
-    efforts.fill(0.0);
+    efforts.fill(std::numeric_limits<double>::quiet_NaN());
+    RCLCPP_WARN_THROTTLE(
+      rclcpp::get_logger(kLoggerName), *get_node()->get_clock(), 2000,
+      "Cannot read force feedback from Inspire hand ID %d", slave_id_);
   }
 
   return true;
+}
+
+bool InspireHandHardware::read_tactile_pad(
+  std::size_t finger, std::vector<uint16_t>& taxels)
+{
+  const auto count = modbus_->readHoldingRegisters(
+    tactile_registers_[finger], static_cast<int>(taxels.size()), taxels.data());
+  return count == static_cast<int>(taxels.size());
 }
 
 bool InspireHandHardware::send_command(
@@ -632,15 +685,14 @@ uint16_t InspireHandHardware::joint_to_actuator_value(
   double radians,
   std::size_t joint_index) const
 {
+  // ROS: lower limit = open. Device ANGLE_SET: 1000 = open, 0 = closed.
   const auto lower = lower_limits_[joint_index];
   const auto upper = upper_limits_[joint_index];
-  if (upper <= lower)
+  if (upper <= lower || !std::isfinite(radians))
   {
     return 1000;
   }
-
   const auto ratio = std::clamp((radians - lower) / (upper - lower), 0.0, 1.0);
-  // Device angle 1000 is extended; ROS bending angle increases towards flexion.
   return static_cast<uint16_t>(std::lround(1000.0 * (1.0 - ratio)));
 }
 
@@ -654,7 +706,6 @@ double InspireHandHardware::actuator_value_to_joint(
   {
     return lower;
   }
-
   const auto ratio = 1.0 - std::clamp(static_cast<double>(value) / 1000.0, 0.0, 1.0);
   return lower + ratio * (upper - lower);
 }

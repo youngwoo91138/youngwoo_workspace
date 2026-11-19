@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -14,6 +15,7 @@
 #include <hardware_interface/types/hardware_interface_return_values.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/state.hpp>
+#include <std_msgs/msg/float64_multi_array.hpp>
 
 #include "modbus_ros2_control/communicator/modbus_rtu_communicator.h"
 
@@ -49,8 +51,16 @@ public:
 private:
   static constexpr std::size_t kJointCount = 6;
   static constexpr std::size_t kActuatorCount = 6;
+  static constexpr std::size_t kTactileFingers = 5;
+  // Pad regions: thumb 12x8; index/middle/ring/pinky 10x8.
+  const std::array<std::string, kTactileFingers> tactile_names_{
+    "thumb", "index", "middle", "ring", "pinky"};
+  const std::array<uint16_t, kTactileFingers> tactile_registers_{4708, 4320, 3950, 3580, 3210};
+  const std::array<std::size_t, kTactileFingers> tactile_rows_{12, 10, 10, 10, 10};
+  static constexpr std::size_t kIndexPadColumns = 8;
 
-  // RH56E2 user manual, section 2.6: ANGLE_SET/ACT are normalized 0..1000.
+  // RH56E2 V1.0.0 manual, section 2.6: device byte addresses.
+  static constexpr uint16_t kModeRegister = 1625;
   static constexpr uint16_t kAngleSetRegister = 1486;
   static constexpr uint16_t kForceSetRegister = 1498;
   static constexpr uint16_t kSpeedSetRegister = 1522;
@@ -68,6 +78,7 @@ private:
   bool initialize_hand();
   bool read_feedback(std::array<double, kJointCount>& positions,
     std::array<double, kJointCount>& efforts);
+  bool read_tactile_pad(std::size_t finger, std::vector<uint16_t>& taxels);
   bool send_command(const std::array<uint16_t, kActuatorCount>& actuator_values);
   bool command_changed(const std::array<uint16_t, kActuatorCount>& actuator_values) const;
 
@@ -89,13 +100,18 @@ private:
   int baudrate_ = 115200;
   int slave_id_ = 1;
   bool read_feedback_enabled_ = true;
+  std::size_t next_tactile_finger_ = 0;
+  bool read_tactile_enabled_ = false;
   int background_period_ms_ = 20;
+  int tactile_read_period_ms_ = 100;
   std::atomic_bool background_period_initialized_{false};
   int command_deadband_raw_ = 1;
-  uint16_t default_speed_ = 400;
-  uint16_t default_force_ = 600;
+  uint16_t default_speed_ = 200;
+  uint16_t default_force_ = 300;
 
   std::unique_ptr<ModbusRtuCommunicator> modbus_;
+  std::array<rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr,
+    kTactileFingers> tactile_pub_;
   std::atomic_bool background_running_{false};
   std::thread background_thread_;
   std::mutex command_mutex_;
@@ -118,6 +134,7 @@ private:
   bool pending_command_valid_ = false;
   bool pending_command_dirty_ = false;
   bool feedback_valid_ = false;
+  std::chrono::steady_clock::time_point last_tactile_read_at_{};
 };
 
 }  // namespace modbus_ros2_control

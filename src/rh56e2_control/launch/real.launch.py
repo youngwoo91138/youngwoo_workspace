@@ -1,4 +1,4 @@
-"""Run one physical RH56E2 hand with the shared hand controller."""
+"""Activate one RH56E2 hand, initialize MOVEJ; hand commands are started manually."""
 
 import os
 
@@ -30,6 +30,7 @@ def generate_launch_description():
             " serial_port:=", LaunchConfiguration("serial_port"),
             " baudrate:=", LaunchConfiguration("baudrate"),
             " read_feedback:=true",
+            " read_tactile:=", LaunchConfiguration("read_tactile"),
         ]),
         value_type=str,
     )
@@ -73,7 +74,6 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("initialize_fsm")),
         output="screen",
     )
-
     def after_hand_controller(event, context):
         if event.returncode != 0:
             return [LogInfo(msg="Hand controller activation failed; FSM was not started.")]
@@ -86,12 +86,16 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("baudrate", default_value="115200"),
         DeclareLaunchArgument(
+            "read_tactile", default_value="true",
+            description="Read all five tactile pads on /hand/tactile/{thumb,index,middle,ring,pinky}_pad.",
+        ),
+        DeclareLaunchArgument(
             "direction", default_value="-1", choices=["-1", "1"],
             description="-1: right hand (default ID 1); 1: left hand (default ID 2).",
         ),
         DeclareLaunchArgument(
             "initialize_fsm", default_value="true", choices=["true", "false"],
-            description="Send HOLD then MOVEJ after controller activation; no grasp target is sent.",
+            description="Send HOLD then MOVEJ after controller activation.",
         ),
         RegisterEventHandler(OnProcessExit(
             target_action=hand_controller, on_exit=after_hand_controller,

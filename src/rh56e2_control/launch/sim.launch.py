@@ -16,35 +16,31 @@ from launch.event_handlers import OnProcessExit
 
 def generate_launch_description():
 
-    # ur5_rh56e2_dscription 패키지 경로
     ur5_rh56e2_share = get_package_share_directory(
         "ur5_rh56e2_description"
     )
 
-    # ros_gz_sim 패키지(gazebo공식 패키지) 경로
     ros_gz_sim_share = get_package_share_directory(
         "ros_gz_sim"
     )
 
-    # 우리가 만든 통합 UR5 + RH56E2 xacro 파일 경로
     xacro_file = os.path.join(
         ur5_rh56e2_share,
         "urdf",
         "ur5_rh56e2.urdf.xacro"
     )
-
-    # 시뮬레이션 world 파일 경로
     robot_common_launch_share = get_package_share_directory(
-        "robot_common_launch"
+    "robot_common_launch"
     )
 
     world_file = os.path.join(
-        robot_common_launch_share,
-        "worlds",
-        "empty.sdf"
+    robot_common_launch_share,
+    "worlds",
+    "empty.sdf"
     )
 
-    # Xacro -> URDF 변환 후 robot_description으로 저장. Xacro -> URDF 변환하기 위해선 ur5_rh56e2.urdf.xacro 파일을 거쳐야 함.
+
+    # Xacro -> URDF
     robot_description = ParameterValue(
     Command([
         "xacro ",
@@ -57,7 +53,7 @@ def generate_launch_description():
     value_type=str
     )
 
-    # robot_state_publisher 노드 생성, 아까 저장했던 robot_description 파라미터를 전달받음.
+    # robot_description publish
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -68,7 +64,7 @@ def generate_launch_description():
         output="screen"
     )
 
-    # Gazebo 실행
+    # Gazebo
     gazebo = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -134,6 +130,26 @@ def generate_launch_description():
     )
 
 
+    # Claim the arm position interfaces and continuously hold its initial pose.
+    arm_hold_controller = Node(
+        package="controller_manager",
+        executable="spawner",
+        arguments=[
+            "ur5_hold_controller",
+            "--controller-manager", "/controller_manager",
+            "--controller-manager-timeout", "30",
+            "--param-file", os.path.join(
+                ur5_rh56e2_share, "config", "ur5_hold_controller.yaml"
+            ),
+        ],
+        output="screen",
+    )
+    arm_hold_node = Node(
+        package="rh56e2_control",
+        executable="arm_hold_node",
+        output="screen",
+    )
+
     # RH56E2 joint controller
     hand_joint_controller = Node(
         package="controller_manager",
@@ -157,9 +173,8 @@ def generate_launch_description():
         )
     )
 
-
     
-    # 최종적으로 이 launch 파일에서 이것들을 실행하라.
+
     return LaunchDescription([
         robot_state_publisher,
         gazebo,
@@ -167,9 +182,9 @@ def generate_launch_description():
         spawn_robot,
 
         joint_state_broadcaster,
+        arm_hold_controller,
+        arm_hold_node,
         hand_joint_controller,
 
         start_fsm_after_controller,
-        spawn_box_after_support,
-        spawn_support,
     ])

@@ -57,6 +57,10 @@ install(
   DESTINATION lib/${PROJECT_NAME}
 )
 
+add_executable(arm_hold_node src/arm_hold_node.cpp)
+ament_target_dependencies(arm_hold_node rclcpp std_msgs)
+install(TARGETS arm_hold_node DESTINATION lib/${PROJECT_NAME})
+
 # 실행 파일에 launch 파일 추가
 install(
   DIRECTORY launch

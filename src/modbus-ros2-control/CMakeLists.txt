@@ -14,6 +14,7 @@ set(THIS_PACKAGE_INCLUDE_DEPENDS
         pluginlib
         rclcpp
         rclcpp_lifecycle
+        std_msgs
         gripper_hardware_common
         arms_controller_common
 )
@@ -65,6 +66,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         ${pluginlib_TARGETS}
         ${rclcpp_TARGETS}
         ${rclcpp_lifecycle_TARGETS}
+        ${std_msgs_TARGETS}
         ${geometry_msgs_TARGETS}
         gripper_hardware_common::gripper_hardware_common
         arms_controller_common::arms_controller_common

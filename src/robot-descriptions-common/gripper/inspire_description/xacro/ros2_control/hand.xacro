@@ -10,6 +10,7 @@
   <xacro:arg name="baudrate" default="115200"/>
   <xacro:arg name="can_interface" default="can0"/>
   <xacro:arg name="read_feedback" default="true"/>
+  <xacro:arg name="read_tactile" default="false"/>
 
   <xacro:include filename="$(find inspire_description)/xacro/hand.xacro"/>
 
@@ -39,6 +40,7 @@
           <param name="hand_side">right</param>
         </xacro:if>
         <param name="read_feedback">$(arg read_feedback)</param>
+        <param name="read_tactile">$(arg read_tactile)</param>
       </xacro:if>
       <xacro:if value="${'$(arg ros2_control_hardware_type)' == 'real_can'}">
         <plugin>can_ros2_control/InspireCanfdHardware</plugin>
