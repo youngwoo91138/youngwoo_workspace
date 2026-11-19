@@ -33,7 +33,7 @@ public:
     const double initial_max_force =
       declare_parameter<double>("initial_max_force", kInitialMaxForce);
     // Thresholds are only INITIAL LAB GUESSES for raw uint16 T1 taxels.
-    tactile_min_sum_ = declare_parameter<double>("tactile_min_sum", 500.0);
+    tactile_min_sum_ = declare_parameter<double>("tactile_min_sum", 10.0);
     slip_distance_cells_ = declare_parameter<double>("slip_distance_cells", 0.2);
     slip_confirm_frames_ = declare_parameter<int>("slip_confirm_frames", 3);
     pressure_drop_ratio_ = declare_parameter<double>("pressure_drop_ratio", 0.2);
@@ -72,7 +72,7 @@ public:
     report_timer_ = create_wall_timer(1s, [this]() { report_state(); });
 
     RCLCPP_INFO(get_logger(),
-      "object=%s | OPEN -> FORCE ZERO(20) -> FORCE(5 fingers) -> LOCKED -> "
+      "object=%s | OPEN -> FORCE ZERO(20) -> FORCE -> LOCKED(4 fingers) -> "
       "TACTILE REFERENCE(first valid frame) -> SLIP MONITOR. "
       "motion=%s auto_regrasp=%s initial_force=[%.1f,%.1f]",
       object_name_.c_str(),
@@ -128,7 +128,7 @@ private:
   std::array<double, kN> command_{};
   std::array<double, kN> min_force_{};
   std::array<double, kN> max_force_{};
-  std::array<bool, kN> stopped_{};
+  bool thumb_force_in_band_ = false;
   int calibration_count_ = 0;
   bool have_state_ = false;
   std::string object_name_ = "unspecified";
@@ -138,7 +138,7 @@ private:
 
   // Per-finger contact-pressure center (CoP) in taxel-cell units.
   // xi, yi are FIXED cell coordinates; only raw pressure values change.
-  double tactile_min_sum_ = 500.0;
+  double tactile_min_sum_ = 10.0;
   double slip_distance_cells_ = 0.2;
   int slip_confirm_frames_ = 3;
   double pressure_drop_ratio_ = 0.2;
@@ -240,7 +240,7 @@ private:
     state_at_ = now;
     // Check every feedback sample so even brief force excursions restart the hold.
     if (phase_ == Phase::FORCE) {
-      if (feedback_gap || !all_forces_in_band()) {
+      if (feedback_gap || !four_finger_forces_in_band()) {
         force_in_band_since_ = {};
       } else if (force_in_band_since_ == std::chrono::steady_clock::time_point{}) {
         force_in_band_since_ = now;
@@ -439,9 +439,7 @@ private:
   void request_regrasp(std::size_t f)
   {
     auto& t = tactile_[f];
-    if (phase_ != Phase::LOCKED ||
-        !std::all_of(stopped_.begin() + 1, stopped_.end(),
-          [](bool stopped) {return stopped;})) {
+    if (phase_ != Phase::LOCKED) {
       return;
     }
     const std::size_t i = f + 1; // thumb flexion maps to thumb_joint2
@@ -516,15 +514,14 @@ private:
           for (std::size_t i = 1; i < kN; ++i) {
             command_[i] = std::clamp(position_[i], 0.0, max_close_[i]);
           }
-          stopped_.fill(false);
-          stopped_[0] = true;
+          thumb_force_in_band_ = false;
           force_in_band_since_ = {};
           last_adjustment_ = now - 1s;
           enter(Phase::FORCE, now);
           RCLCPP_INFO(get_logger(),
             "[FORCE ZERO DONE] Tactile baseline collection will start after LOCKED");
           RCLCPP_INFO(get_logger(),
-            "[FORCE] Starting other 5 fingers from current angles; "
+            "[FORCE] Adjusting grasp from current angles; "
             "shared force bands [%.1f, %.1f]",
             min_force_[kIndex], max_force_[kIndex]);
         } else if (elapsed(now, phase_at_) > 10.0) {
@@ -536,15 +533,14 @@ private:
         if (elapsed(now, last_adjustment_) >= kAdjustmentInterval) {
           for (std::size_t i = 1; i < kN; ++i) {
             const double measured = force(i);
-            if (measured >= min_force_[i] && measured <= max_force_[i]) {
-              if (!stopped_[i]) {
+            if (i == 1) {
+              const bool in_band = measured >= min_force_[i] && measured <= max_force_[i];
+              if (in_band && !thumb_force_in_band_) {
                 command_[i] = std::clamp(position_[i], 0.0, max_close_[i]);
-                if (i > 1) {
-                  RCLCPP_INFO(get_logger(), "[HOLD] %s F=%.1f angle=%.3f",
-                    joint_names_[i].c_str(), measured, command_[i]);
-                }
               }
-            } else if (measured < min_force_[i]) {
+              thumb_force_in_band_ = in_band;
+            }
+            if (measured < min_force_[i]) {
               // Wait for position response before moving again.
               if (std::abs(command_[i] - position_[i]) <= kPositionTrackingTolerance) {
                 if (command_[i] >= max_close_[i] - 1e-6) {
@@ -553,19 +549,22 @@ private:
                 }
                 command_[i] = std::min(max_close_[i], command_[i] + kAngleStep);
               }
-            } else {
+            } else if (measured > max_force_[i]) {
               command_[i] = std::max(0.0,
                 std::min(command_[i], position_[i]) - kAngleStep);
             }
-            stopped_[i] = measured >= min_force_[i] && measured <= max_force_[i];
           }
           last_adjustment_ = now;
-          if (all_forces_in_band() &&
+          if (four_finger_forces_in_band() &&
               force_in_band_since_ != std::chrono::steady_clock::time_point{} &&
               elapsed(now, force_in_band_since_) >= kForceHoldSeconds) {
+            // Freeze all four targets from the same feedback sample.
+            for (std::size_t i = kIndex; i < kN; ++i) {
+              command_[i] = std::clamp(position_[i], 0.0, max_close_[i]);
+            }
             enter(Phase::LOCKED, now);
             RCLCPP_INFO(get_logger(),
-              "================ ALL 5 FINGERS LOCKED ================");
+              "================ ALL 4 FINGERS LOCKED ================");
             for (std::size_t f = 1; f < kFingers; ++f) {
               const auto& t = tactile_[f];
               RCLCPP_INFO(get_logger(),
@@ -578,7 +577,7 @@ private:
                 t.last_tactile_sum_);
             }
             RCLCPP_INFO(get_logger(),
-              "[LOCKED] All 5 fingers maintained their force bands for 3 seconds; holding joint targets. "
+              "[LOCKED] Index through pinky held their force bands for 3 seconds; four joint targets locked. "
               "Waiting for stable tactile CoP baseline. NOT proof of secure grasp.");
           }
         }
@@ -593,9 +592,9 @@ private:
     publish_command();
   }
 
-  bool all_forces_in_band() const
+  bool four_finger_forces_in_band() const
   {
-    for (std::size_t i = 1; i < kN; ++i) {
+    for (std::size_t i = kIndex; i < kN; ++i) {
       if (force(i) < min_force_[i] || force(i) > max_force_[i]) return false;
     }
     return true;

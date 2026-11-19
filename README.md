@@ -8,8 +8,8 @@ Ubuntu 24.04와 ROS 2 Jazzy가 설치된 환경에서 실행합니다. 처음 �
 
 ```bash
 sudo apt install git python3-colcon-common-extensions python3-rosdep
-git clone https://github.com/leeheejoon/rh56e2_gazebo_project.git
-cd rh56e2_gazebo_project
+git clone https://github.com/youngwoo91138/youngwoo_workspace.git
+cd youngwoo_workspace
 source /opt/ros/jazzy/setup.bash
 rosdep update
 rosdep install --from-paths $(colcon list --packages-up-to rh56e2_control --paths-only) \
@@ -39,7 +39,7 @@ source install/setup.bash
      -p object_name:=sample -p enable_auto_regrasp:=false
    ```
 
-4. 손을 비운 채 힘 센서 영점 보정을 기다립니다. `[FORCE ZERO DONE]` 이후 손가락 경로를 비운 상태에서 테스트 물체를 지그에 고정해 파지합니다. `ALL 5 FINGERS LOCKED`와 `CoP baseline ready`가 표시되면 물체에 작은 하중을 가해 미끄러짐을 유도합니다.
+4. 손을 비운 채 힘 센서 영점 보정을 기다립니다. `[FORCE ZERO DONE]` 이후 손가락 경로를 비운 상태에서 테스트 물체를 지그에 고정해 파지합니다. 검지부터 소지까지 네 손가락이 모두 목표 힘 범위를 3초 연속 유지하면, 네 관절의 현재 각도가 동시에 고정됩니다. 그 전에 한 손가락이라도 범위를 벗어나면 3초를 다시 셉니다. `ALL 4 FINGERS LOCKED`와 `CoP baseline ready`가 표시되면 물체에 작은 하중을 가해 미끄러짐을 유도합니다.
 5. `[SLIP SUSPECTED]` 로그에서 감지된 손가락과 원인을 확인합니다. 기본값은 CoP가 0.2셀 이상 이동하거나 압력 합이 기준보다 20% 이상 감소한 상태가 3프레임 연속 관측될 때 경고를 출력합니다. 자동 재파지까지 시험하려면 두 번째 명령에서 `enable_auto_regrasp:=true`를 지정합니다.
 
 촉각 데이터 수신을 확인하려면 `ros2 topic echo /hand/tactile/index_pad --once --qos-reliability best_effort`를 실행합니다.
